@@ -1,0 +1,130 @@
+#include <WiFi.h>
+#include <HTTPClient.h>
+#include <U8g2lib.h>
+#include <Wire.h>
+#include <ArduinoJson.h>
+
+U8G2_SSD1306_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, /* reset=*/ U8X8_PIN_NONE, /* clock=*/ SCL, /* data=*/ SDA); // initialization for the used OLED display
+
+const char* ssid = "PLDTHOMEFIBRa4c90";
+const char* password = "PLDTWIFI4kbcz";
+
+String inputString = "";  // a String to hold incoming data
+bool stringComplete = false;  // whether the string is complete
+
+void setup() {
+  Serial.begin(115200);                 // Serial connection
+  WiFi.begin(ssid, password);           // WiFi connection
+
+  while (WiFi.status() != WL_CONNECTED) {  // Wait for the WiFi connection completion
+    delay(500);
+    Serial.println("Waiting for connection");
+  }
+
+  Serial.println("WiFi connected");
+
+  u8g2.begin();
+  inputString.reserve(200);  // reserve 200 bytes for the inputString
+}
+
+void loop() {
+  if (stringComplete) {
+    // Clear the OLED screen
+    u8g2.clearBuffer();
+
+    // Extract ID from inputString
+    int id = inputString.toInt();
+
+    if (WiFi.status() == WL_CONNECTED) { // Check WiFi connection status
+      WiFiClient client;
+
+      HTTPClient http;    // Declare object of class HTTPClient
+
+      // Create the URL with the ID
+      String url = "https://jsonplaceholder.typicode.com/users";
+      Serial.println("Requesting URL: " + url); // Debug: print the URL being requested
+
+      if (http.begin(client, url)) {  // Specify request destination
+        int httpCode = http.GET();   // Send the request
+
+        if (httpCode > 0) { // Check for the returning code
+          if (httpCode == HTTP_CODE_OK) { // If the return code is 200
+            String payload = http.getString(); // Get the response payload
+
+            // Allocate a smaller JSON document
+            StaticJsonDocument<512> filter;
+            JsonArray users = filter.to<JsonArray>();
+            for (int i = 0; i < 10; i++) {
+              JsonObject user = users.createNestedObject();
+              user["id"] = true;
+              user["name"] = true;
+            }
+
+            // Parse JSON array with filter
+            StaticJsonDocument<512> doc;
+            DeserializationError error = deserializeJson(doc, payload, DeserializationOption::Filter(filter));
+            if (error) {
+              Serial.print(F("deserializeJson() failed: "));
+              Serial.println(error.f_str());
+              return;
+            }
+
+            // Find the user with the given ID
+            const char* name = nullptr;
+            for (JsonObject user : doc.as<JsonArray>()) {
+              if (user["id"] == id) {
+                name = user["name"];
+                break;
+              }
+            }
+
+            if (name) {
+              // Create message
+              String message = "Hi, " + String(name);
+
+              // Display message on the OLED screen
+              u8g2.setFont(u8g2_font_6x12_tr);
+              u8g2.drawStr(4, 32, message.c_str());
+              u8g2.sendBuffer();
+
+              // Print message to Serial Monitor
+              Serial.println(message);
+            } else {
+              Serial.println("User ID not found");
+            }
+          } else {
+            Serial.printf("Unexpected HTTP response code: %d\n", httpCode); // Debug: print unexpected HTTP code
+          }
+        } else {
+          Serial.printf("Error on HTTP request: %s\n", http.errorToString(httpCode).c_str()); // Debug: print error on HTTP request
+        }
+
+        http.end();  // Close connection
+      } else {
+        Serial.println("Unable to connect to server");
+      }
+    } else {
+      Serial.println("Error in WiFi connection");
+    }
+
+    // Clear the string
+    inputString = "";
+    stringComplete = false;
+  }
+
+  delay(100);  // Short delay to avoid excessive polling
+}
+
+void serialEvent() {
+  while (Serial.available()) {
+    // Get the new byte
+    char inChar = (char)Serial.read();
+    // Add it to the inputString
+    inputString += inChar;
+    // If the incoming character is a newline, set a flag so the main loop can
+    // do something about it
+    if (inChar == '\n') {
+      stringComplete = true;
+    }
+  }
+}
